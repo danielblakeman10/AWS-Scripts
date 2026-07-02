@@ -14,8 +14,9 @@ usage() {
     cat <<EOF
 Usage: ./nuke-aws-lab-resources.sh [options]
 
-Deletes EC2 instances, key pairs, VPC dependencies, non-default security groups,
-subnets, internet gateways, NAT gateways, route tables, and non-default VPCs.
+Deletes EC2 instances, key pairs, VPC dependencies, network interfaces,
+non-default security groups, subnets, internet gateways, NAT gateways, route tables,
+and non-default VPCs.
 Resources with tag keys or values containing "roc" are always skipped.
 
 Default mode is dry-run. Nothing is deleted unless --confirm-delete is provided.
@@ -154,6 +155,7 @@ for region in regions:
     igws = aws_json(["ec2", "describe-internet-gateways", "--region", region]) or {"InternetGateways": []}
     route_tables = aws_json(["ec2", "describe-route-tables", "--region", region]) or {"RouteTables": []}
     security_groups = aws_json(["ec2", "describe-security-groups", "--region", region]) or {"SecurityGroups": []}
+    network_interfaces = aws_json(["ec2", "describe-network-interfaces", "--region", region]) or {"NetworkInterfaces": []}
     instances = aws_json([
         "ec2", "describe-instances",
         "--region", region,
@@ -177,6 +179,10 @@ for region in regions:
     selected_security_groups = [
         sg for sg in security_groups.get("SecurityGroups", [])
         if sg.get("VpcId") in selected_vpc_ids and sg.get("GroupName") != "default" and not tag_has_pattern(sg.get("Tags", []))
+    ]
+    selected_network_interfaces = [
+        eni for eni in network_interfaces.get("NetworkInterfaces", [])
+        if eni.get("VpcId") in selected_vpc_ids and not tag_has_pattern(eni.get("TagSet", []))
     ]
 
     selected_instances = []
@@ -202,6 +208,7 @@ for region in regions:
         "internetGateways": selected_igws,
         "routeTables": selected_route_tables,
         "securityGroups": selected_security_groups,
+        "networkInterfaces": selected_network_interfaces,
         "instances": selected_instances,
         "keyPairs": selected_key_pairs
     })
@@ -366,6 +373,60 @@ delete_route_tables() {
     done
 }
 
+delete_network_interfaces() {
+    local region=$1
+    local vpc_id=$2
+    local network_interface_ids
+
+    network_interface_ids=$(aws ec2 describe-network-interfaces \
+        --region "$region" \
+        --filters "Name=vpc-id,Values=${vpc_id}" \
+        --query 'NetworkInterfaces[].NetworkInterfaceId' \
+        --output text 2>/dev/null | words)
+
+    for network_interface_id in $network_interface_ids; do
+        if has_protected_tag "$region" "$network_interface_id"; then
+            warn "Skipping network interface with protected tag in ${region}: ${network_interface_id}"
+            continue
+        fi
+
+        requester_managed=$(aws ec2 describe-network-interfaces \
+            --region "$region" \
+            --network-interface-ids "$network_interface_id" \
+            --query 'NetworkInterfaces[0].RequesterManaged' \
+            --output text 2>/dev/null || true)
+        if [ "$requester_managed" = "True" ]; then
+            warn "Skipping requester-managed network interface in ${region}: ${network_interface_id}"
+            continue
+        fi
+
+        attachment_id=$(aws ec2 describe-network-interfaces \
+            --region "$region" \
+            --network-interface-ids "$network_interface_id" \
+            --query 'NetworkInterfaces[0].Attachment.AttachmentId' \
+            --output text 2>/dev/null || true)
+
+        if [ -n "$attachment_id" ] && [ "$attachment_id" != "None" ]; then
+            log "Detaching network interface in ${region}: ${network_interface_id}"
+            run aws ec2 detach-network-interface --region "$region" --attachment-id "$attachment_id" --force >/dev/null || true
+            if [ "$CONFIRM" = true ]; then
+                for _ in 1 2 3 4 5 6 7 8 9 10 11 12; do
+                    status=$(aws ec2 describe-network-interfaces \
+                        --region "$region" \
+                        --network-interface-ids "$network_interface_id" \
+                        --query 'NetworkInterfaces[0].Status' \
+                        --output text 2>/dev/null || true)
+                    [ "$status" = "available" ] && break
+                    sleep 5
+                done
+            fi
+        fi
+
+        log "Deleting network interface in ${region}: ${network_interface_id}"
+        run aws ec2 delete-network-interface --region "$region" --network-interface-id "$network_interface_id" >/dev/null || true
+    done
+}
+
 delete_subnets() {
     local region=$1
     local vpc_id=$2
@@ -438,6 +499,7 @@ delete_vpcs() {
         delete_nat_gateways "$region" "$vpc_id"
         delete_internet_gateways "$region" "$vpc_id"
         delete_route_tables "$region" "$vpc_id"
+        delete_network_interfaces "$region" "$vpc_id"
         delete_subnets "$region" "$vpc_id"
         delete_security_groups "$region" "$vpc_id"
 
