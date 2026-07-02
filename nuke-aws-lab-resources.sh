@@ -7,6 +7,7 @@ CONFIRM=false
 REGION=""
 ALL_REGIONS=true
 INCLUDE_DEFAULT_VPCS=false
+PROTECTED_TAG_PATTERN="roc"
 
 usage() {
     cat <<EOF
@@ -14,6 +15,7 @@ Usage: ./nuke-aws-lab-resources.sh [options]
 
 Deletes EC2 instances, key pairs, VPC dependencies, non-default security groups,
 subnets, internet gateways, NAT gateways, route tables, and non-default VPCs.
+Resources with tag keys or values containing "roc" are always skipped.
 
 Default mode is dry-run. Nothing is deleted unless --confirm-delete is provided.
 
@@ -54,9 +56,32 @@ words() {
     tr '\t' '\n' | tr ' ' '\n' | sed '/^$/d'
 }
 
+has_protected_tag() {
+    local region=$1
+    local resource_id=$2
+
+    aws ec2 describe-tags \
+        --region "$region" \
+        --filters "Name=resource-id,Values=${resource_id}" \
+        --query 'Tags[].{Key:Key,Value:Value}' \
+        --output text 2>/dev/null | grep -qi "$PROTECTED_TAG_PATTERN"
+}
+
+key_pair_has_protected_tag() {
+    local region=$1
+    local key_name=$2
+
+    aws ec2 describe-key-pairs \
+        --region "$region" \
+        --key-names "$key_name" \
+        --query 'KeyPairs[].Tags[].{Key:Key,Value:Value}' \
+        --output text 2>/dev/null | grep -qi "$PROTECTED_TAG_PATTERN"
+}
+
 delete_instances() {
     local region=$1
     local instance_ids
+    local delete_ids=""
 
     instance_ids=$(aws ec2 describe-instances \
         --region "$region" \
@@ -69,11 +94,24 @@ delete_instances() {
         return 0
     fi
 
-    log "Terminating EC2 instances in ${region}: ${instance_ids}"
-    run aws ec2 terminate-instances --region "$region" --instance-ids $instance_ids >/dev/null
+    for instance_id in $instance_ids; do
+        if has_protected_tag "$region" "$instance_id"; then
+            warn "Skipping EC2 instance with protected tag in ${region}: ${instance_id}"
+            continue
+        fi
+        delete_ids="${delete_ids} ${instance_id}"
+    done
+
+    if [ -z "$(printf '%s' "$delete_ids" | words)" ]; then
+        log "No unprotected EC2 instances found in ${region}"
+        return 0
+    fi
+
+    log "Terminating EC2 instances in ${region}:${delete_ids}"
+    run aws ec2 terminate-instances --region "$region" --instance-ids $delete_ids >/dev/null
 
     if [ "$CONFIRM" = true ]; then
-        aws ec2 wait instance-terminated --region "$region" --instance-ids $instance_ids
+        aws ec2 wait instance-terminated --region "$region" --instance-ids $delete_ids
     fi
 }
 
@@ -92,6 +130,10 @@ delete_key_pairs() {
     fi
 
     for key_name in $key_names; do
+        if key_pair_has_protected_tag "$region" "$key_name"; then
+            warn "Skipping key pair with protected tag in ${region}: ${key_name}"
+            continue
+        fi
         log "Deleting key pair in ${region}: ${key_name}"
         run aws ec2 delete-key-pair --region "$region" --key-name "$key_name" >/dev/null
     done
@@ -101,6 +143,7 @@ delete_nat_gateways() {
     local region=$1
     local vpc_id=$2
     local nat_gateway_ids
+    local delete_ids=""
 
     nat_gateway_ids=$(aws ec2 describe-nat-gateways \
         --region "$region" \
@@ -109,12 +152,17 @@ delete_nat_gateways() {
         --output text 2>/dev/null | words)
 
     for nat_gateway_id in $nat_gateway_ids; do
+        if has_protected_tag "$region" "$nat_gateway_id"; then
+            warn "Skipping NAT gateway with protected tag in ${region}: ${nat_gateway_id}"
+            continue
+        fi
         log "Deleting NAT gateway in ${region}: ${nat_gateway_id}"
         run aws ec2 delete-nat-gateway --region "$region" --nat-gateway-id "$nat_gateway_id" >/dev/null
+        delete_ids="${delete_ids} ${nat_gateway_id}"
     done
 
-    if [ -n "$nat_gateway_ids" ] && [ "$CONFIRM" = true ]; then
-        for nat_gateway_id in $nat_gateway_ids; do
+    if [ -n "$(printf '%s' "$delete_ids" | words)" ] && [ "$CONFIRM" = true ]; then
+        for nat_gateway_id in $delete_ids; do
             while true; do
                 state=$(aws ec2 describe-nat-gateways \
                     --region "$region" \
@@ -140,6 +188,10 @@ delete_internet_gateways() {
         --output text 2>/dev/null | words)
 
     for igw_id in $igw_ids; do
+        if has_protected_tag "$region" "$igw_id"; then
+            warn "Skipping internet gateway with protected tag in ${region}: ${igw_id}"
+            continue
+        fi
         log "Detaching and deleting internet gateway in ${region}: ${igw_id}"
         run aws ec2 detach-internet-gateway --region "$region" --internet-gateway-id "$igw_id" --vpc-id "$vpc_id" >/dev/null || true
         run aws ec2 delete-internet-gateway --region "$region" --internet-gateway-id "$igw_id" >/dev/null || true
@@ -158,6 +210,10 @@ delete_route_tables() {
         --output text 2>/dev/null | words)
 
     for route_table_id in $route_table_ids; do
+        if has_protected_tag "$region" "$route_table_id"; then
+            warn "Skipping route table with protected tag in ${region}: ${route_table_id}"
+            continue
+        fi
         local association_ids
         association_ids=$(aws ec2 describe-route-tables \
             --region "$region" \
@@ -187,6 +243,10 @@ delete_subnets() {
         --output text 2>/dev/null | words)
 
     for subnet_id in $subnet_ids; do
+        if has_protected_tag "$region" "$subnet_id"; then
+            warn "Skipping subnet with protected tag in ${region}: ${subnet_id}"
+            continue
+        fi
         log "Deleting subnet in ${region}: ${subnet_id}"
         run aws ec2 delete-subnet --region "$region" --subnet-id "$subnet_id" >/dev/null || true
     done
@@ -204,6 +264,10 @@ delete_security_groups() {
         --output text 2>/dev/null | words)
 
     for security_group_id in $security_group_ids; do
+        if has_protected_tag "$region" "$security_group_id"; then
+            warn "Skipping security group with protected tag in ${region}: ${security_group_id}"
+            continue
+        fi
         log "Deleting security group in ${region}: ${security_group_id}"
         run aws ec2 delete-security-group --region "$region" --group-id "$security_group_id" >/dev/null || true
     done
@@ -231,6 +295,10 @@ delete_vpcs() {
     fi
 
     for vpc_id in $vpc_ids; do
+        if has_protected_tag "$region" "$vpc_id"; then
+            warn "Skipping VPC with protected tag in ${region}: ${vpc_id}"
+            continue
+        fi
         log "Cleaning VPC in ${region}: ${vpc_id}"
         delete_nat_gateways "$region" "$vpc_id"
         delete_internet_gateways "$region" "$vpc_id"
