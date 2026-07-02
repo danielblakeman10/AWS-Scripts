@@ -8,6 +8,7 @@ Small Bash utilities for AWS CLI learning labs.
 - `aws-scripts/delete-my-aws-vpcs.sh` deletes VPCs tagged `Name=my-aws-vpc` and common dependencies such as EC2 instances, EC2 Instance Connect Endpoints, NAT gateways, internet gateways, network interfaces, subnets, route tables, and non-default security groups.
 - `aws-scripts/delete-iam-roles.sh` deletes IAM roles after removing managed policy attachments, inline policies, and instance profile associations. It defaults to dry-run and skips service-linked roles unless explicitly included.
 - `aws-scripts/nuke-aws-lab-resources.sh` scans enabled regions and deletes EC2 instances, EC2 key pairs, EC2 Instance Connect Endpoints, network interfaces, VPC dependencies, and VPCs. It defaults to dry-run, skips any resource with a tag key or value containing `roc`, preserves default VPCs unless `--include-default-vpcs` is passed, and requires `--confirm-delete` before making changes.
+- `aws-scripts/rollback-iam-roles.sh` recreates IAM roles from a rollback manifest written by `aws-scripts/delete-iam-roles.sh`.
 - `aws-scripts/rollback-aws-lab-resources.sh` recreates EC2/VPC lab infrastructure from a rollback manifest written by `aws-scripts/nuke-aws-lab-resources.sh`.
 
 ## Usage
@@ -56,6 +57,27 @@ Delete IAM roles while excluding protected naming patterns:
 
 ```bash
 ./aws-scripts/delete-iam-roles.sh --exclude-name-pattern 'roc|AWSReservedSSO' --confirm-delete
+```
+
+When confirmed IAM role deletion runs, the script writes a rollback manifest under:
+
+```bash
+./rollback-manifests/
+```
+
+Preview IAM role rollback:
+
+```bash
+chmod +x aws-scripts/rollback-iam-roles.sh
+./aws-scripts/rollback-iam-roles.sh --manifest ./rollback-manifests/iam-role-cleanup-inventory-YYYYMMDDTHHMMSSZ.json
+```
+
+Actually run IAM role rollback:
+
+```bash
+./aws-scripts/rollback-iam-roles.sh \
+  --manifest ./rollback-manifests/iam-role-cleanup-inventory-YYYYMMDDTHHMMSSZ.json \
+  --confirm-restore
 ```
 
 Preview broad EC2/VPC cleanup across all enabled regions:
@@ -117,3 +139,5 @@ Actually run rollback:
 These scripts are for lab environments. Review security group rules and deletion behavior before using them in any shared or production AWS account.
 
 Rollback has limits: original AWS resource IDs cannot be restored, terminated EC2 disks/data cannot be restored unless separately backed up, EC2 instances are relaunched from captured configuration when possible, attached/requester-managed network interfaces are not directly recreated, and key pairs are restored only when public key material is available in the manifest.
+
+IAM rollback has limits: service-linked roles are skipped, existing roles with the same names are skipped, managed policies are reattached only if the policy ARNs still exist, and instance profile associations are restored only if those instance profiles still exist.
