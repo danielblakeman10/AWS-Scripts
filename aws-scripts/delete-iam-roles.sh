@@ -7,6 +7,7 @@ CONFIRM=false
 INCLUDE_SERVICE_LINKED=false
 NAME_PATTERN=""
 EXCLUDE_NAME_PATTERN=""
+MANIFEST_DIR="./rollback-manifests"
 
 usage() {
     cat <<EOF
@@ -23,6 +24,7 @@ Options:
   --exclude-name-pattern REGEX
                             Skip role names matching this regex.
   --include-service-linked  Also attempt service-linked role deletion.
+  --manifest-dir DIR        Write rollback manifests to this directory. Default: ${MANIFEST_DIR}
   -h, --help                Show this help.
 
 Examples:
@@ -79,6 +81,99 @@ should_delete_role() {
     fi
 
     return 0
+}
+
+write_rollback_manifest() {
+    local manifest_path
+    local timestamp
+
+    timestamp=$(date -u '+%Y%m%dT%H%M%SZ')
+    mkdir -p "$MANIFEST_DIR"
+    manifest_path="${MANIFEST_DIR}/iam-role-cleanup-inventory-${timestamp}.json"
+
+    log "Writing IAM rollback inventory manifest: ${manifest_path}"
+    python3 - "$manifest_path" "$INCLUDE_SERVICE_LINKED" "$NAME_PATTERN" "$EXCLUDE_NAME_PATTERN" <<'PY'
+import json
+import re
+import subprocess
+import sys
+from datetime import datetime, timezone
+
+manifest_path = sys.argv[1]
+include_service_linked = sys.argv[2].lower() == "true"
+name_pattern = sys.argv[3]
+exclude_name_pattern = sys.argv[4]
+
+def aws_json(args):
+    proc = subprocess.run(["aws", *args, "--output", "json"], text=True, capture_output=True)
+    if proc.returncode != 0:
+        return None
+    text = proc.stdout.strip()
+    return json.loads(text) if text else None
+
+def matches(role):
+    name = role["RoleName"]
+    path = role.get("Path", "")
+    if not include_service_linked and path.startswith("/aws-service-role/"):
+        return False
+    if name_pattern and not re.search(name_pattern, name, re.IGNORECASE):
+        return False
+    if exclude_name_pattern and re.search(exclude_name_pattern, name, re.IGNORECASE):
+        return False
+    return True
+
+roles = aws_json(["iam", "list-roles"]) or {"Roles": []}
+selected = []
+
+for role in roles.get("Roles", []):
+    if not matches(role):
+        continue
+
+    role_name = role["RoleName"]
+    role_detail = aws_json(["iam", "get-role", "--role-name", role_name]) or {"Role": role}
+    role_record = role_detail["Role"]
+    role_record["AttachedManagedPolicies"] = (aws_json([
+        "iam", "list-attached-role-policies",
+        "--role-name", role_name
+    ]) or {"AttachedPolicies": []}).get("AttachedPolicies", [])
+    role_record["InstanceProfiles"] = (aws_json([
+        "iam", "list-instance-profiles-for-role",
+        "--role-name", role_name
+    ]) or {"InstanceProfiles": []}).get("InstanceProfiles", [])
+    role_record["RoleTags"] = (aws_json([
+        "iam", "list-role-tags",
+        "--role-name", role_name
+    ]) or {"Tags": []}).get("Tags", [])
+
+    inline_names = (aws_json([
+        "iam", "list-role-policies",
+        "--role-name", role_name
+    ]) or {"PolicyNames": []}).get("PolicyNames", [])
+    inline_policies = []
+    for policy_name in inline_names:
+        policy = aws_json([
+            "iam", "get-role-policy",
+            "--role-name", role_name,
+            "--policy-name", policy_name
+        ])
+        if policy:
+            inline_policies.append(policy)
+    role_record["InlinePolicies"] = inline_policies
+    selected.append(role_record)
+
+manifest = {
+    "schema": "aws-scripts.iam-role-rollback.v1",
+    "createdAt": datetime.now(timezone.utc).isoformat(),
+    "includeServiceLinked": include_service_linked,
+    "namePattern": name_pattern,
+    "excludeNamePattern": exclude_name_pattern,
+    "roles": selected
+}
+
+with open(manifest_path, "w", encoding="utf-8") as handle:
+    json.dump(manifest, handle, indent=2, sort_keys=True, default=str)
+    handle.write("\n")
+PY
 }
 
 delete_role_dependencies() {
@@ -158,6 +253,10 @@ while [ $# -gt 0 ]; do
             INCLUDE_SERVICE_LINKED=true
             shift
             ;;
+        --manifest-dir)
+            MANIFEST_DIR=${2:?Missing manifest directory}
+            shift 2
+            ;;
         -h|--help)
             usage
             exit 0
@@ -182,6 +281,8 @@ fi
 
 if [ "$CONFIRM" != true ]; then
     warn "Dry-run mode. Add --confirm-delete to actually delete IAM roles."
+else
+    write_rollback_manifest
 fi
 
 roles_json=$(aws iam list-roles \
