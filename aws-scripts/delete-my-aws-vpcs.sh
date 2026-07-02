@@ -13,7 +13,7 @@ usage() {
 Usage: ./delete-my-aws-vpcs.sh [options]
 
 Deletes VPCs tagged Name=${VPC_NAME} and their common dependencies, including
-eligible EC2 network interfaces.
+EC2 Instance Connect Endpoints and eligible EC2 network interfaces.
 
 Options:
   --region REGION     AWS region to clean. Default: ${REGION}
@@ -48,6 +48,37 @@ run() {
 
 read_words() {
     tr '\t' '\n' | tr ' ' '\n' | sed '/^$/d'
+}
+
+delete_instance_connect_endpoints() {
+    local region=$1
+    local vpc_id=$2
+    local endpoint_ids
+
+    endpoint_ids=$(aws ec2 describe-instance-connect-endpoints \
+        --region "$region" \
+        --filters "Name=vpc-id,Values=${vpc_id}" \
+        --query 'InstanceConnectEndpoints[].InstanceConnectEndpointId' \
+        --output text 2>/dev/null | read_words)
+
+    for endpoint_id in $endpoint_ids; do
+        log "Deleting EC2 Instance Connect Endpoint: ${endpoint_id}"
+        run aws ec2 delete-instance-connect-endpoint --region "$region" --instance-connect-endpoint-id "$endpoint_id" >/dev/null || true
+    done
+
+    if [ -n "$endpoint_ids" ] && [ "$DRY_RUN" = false ]; then
+        for endpoint_id in $endpoint_ids; do
+            for _ in 1 2 3 4 5 6 7 8 9 10 11 12 13 14 15 16 17 18; do
+                state=$(aws ec2 describe-instance-connect-endpoints \
+                    --region "$region" \
+                    --instance-connect-endpoint-ids "$endpoint_id" \
+                    --query 'InstanceConnectEndpoints[0].State' \
+                    --output text 2>/dev/null || true)
+                [ "$state" = "delete-complete" ] || [ -z "$state" ] || [ "$state" = "None" ] && break
+                sleep 10
+            done
+        done
+    fi
 }
 
 delete_vpc_dependencies() {
@@ -131,6 +162,8 @@ delete_vpc_dependencies() {
         log "Deleting route table: ${route_table_id}"
         run aws ec2 delete-route-table --region "$region" --route-table-id "$route_table_id" >/dev/null || true
     done
+
+    delete_instance_connect_endpoints "$region" "$vpc_id"
 
     local network_interface_ids
     network_interface_ids=$(aws ec2 describe-network-interfaces \

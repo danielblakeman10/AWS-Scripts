@@ -14,9 +14,9 @@ usage() {
     cat <<EOF
 Usage: ./nuke-aws-lab-resources.sh [options]
 
-Deletes EC2 instances, key pairs, VPC dependencies, network interfaces,
-non-default security groups, subnets, internet gateways, NAT gateways, route tables,
-and non-default VPCs.
+Deletes EC2 instances, key pairs, VPC dependencies, EC2 Instance Connect Endpoints,
+network interfaces, non-default security groups, subnets, internet gateways,
+NAT gateways, route tables, and non-default VPCs.
 Resources with tag keys or values containing "roc" are always skipped.
 
 Default mode is dry-run. Nothing is deleted unless --confirm-delete is provided.
@@ -373,6 +373,44 @@ delete_route_tables() {
     done
 }
 
+delete_instance_connect_endpoints() {
+    local region=$1
+    local vpc_id=$2
+    local endpoint_ids
+    local delete_ids=""
+
+    endpoint_ids=$(aws ec2 describe-instance-connect-endpoints \
+        --region "$region" \
+        --filters "Name=vpc-id,Values=${vpc_id}" \
+        --query 'InstanceConnectEndpoints[].InstanceConnectEndpointId' \
+        --output text 2>/dev/null | words)
+
+    for endpoint_id in $endpoint_ids; do
+        if has_protected_tag "$region" "$endpoint_id"; then
+            warn "Skipping EC2 Instance Connect Endpoint with protected tag in ${region}: ${endpoint_id}"
+            continue
+        fi
+
+        log "Deleting EC2 Instance Connect Endpoint in ${region}: ${endpoint_id}"
+        run aws ec2 delete-instance-connect-endpoint --region "$region" --instance-connect-endpoint-id "$endpoint_id" >/dev/null || true
+        delete_ids="${delete_ids} ${endpoint_id}"
+    done
+
+    if [ -n "$(printf '%s' "$delete_ids" | words)" ] && [ "$CONFIRM" = true ]; then
+        for endpoint_id in $delete_ids; do
+            for _ in 1 2 3 4 5 6 7 8 9 10 11 12 13 14 15 16 17 18; do
+                state=$(aws ec2 describe-instance-connect-endpoints \
+                    --region "$region" \
+                    --instance-connect-endpoint-ids "$endpoint_id" \
+                    --query 'InstanceConnectEndpoints[0].State' \
+                    --output text 2>/dev/null || true)
+                [ "$state" = "delete-complete" ] || [ -z "$state" ] || [ "$state" = "None" ] && break
+                sleep 10
+            done
+        done
+    fi
+}
+
 delete_network_interfaces() {
     local region=$1
     local vpc_id=$2
@@ -499,6 +537,7 @@ delete_vpcs() {
         delete_nat_gateways "$region" "$vpc_id"
         delete_internet_gateways "$region" "$vpc_id"
         delete_route_tables "$region" "$vpc_id"
+        delete_instance_connect_endpoints "$region" "$vpc_id"
         delete_network_interfaces "$region" "$vpc_id"
         delete_subnets "$region" "$vpc_id"
         delete_security_groups "$region" "$vpc_id"

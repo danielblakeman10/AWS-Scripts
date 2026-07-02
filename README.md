@@ -5,8 +5,8 @@ Small Bash utilities for AWS CLI learning labs.
 ## Scripts
 
 - `aws-scripts/aws-auto-deploy.sh` creates a basic EC2 lab stack in `us-east-1`: VPC, public subnet, route table, internet gateway, security group, key pair, and EC2 instance.
-- `aws-scripts/delete-my-aws-vpcs.sh` deletes VPCs tagged `Name=my-aws-vpc` and common dependencies such as EC2 instances, NAT gateways, internet gateways, network interfaces, subnets, route tables, and non-default security groups.
-- `aws-scripts/nuke-aws-lab-resources.sh` scans enabled regions and deletes EC2 instances, EC2 key pairs, network interfaces, VPC dependencies, and VPCs. It defaults to dry-run, skips any resource with a tag key or value containing `roc`, preserves default VPCs unless `--include-default-vpcs` is passed, and requires `--confirm-delete` before making changes.
+- `aws-scripts/delete-my-aws-vpcs.sh` deletes VPCs tagged `Name=my-aws-vpc` and common dependencies such as EC2 instances, EC2 Instance Connect Endpoints, NAT gateways, internet gateways, network interfaces, subnets, route tables, and non-default security groups.
+- `aws-scripts/nuke-aws-lab-resources.sh` scans enabled regions and deletes EC2 instances, EC2 key pairs, EC2 Instance Connect Endpoints, network interfaces, VPC dependencies, and VPCs. It defaults to dry-run, skips any resource with a tag key or value containing `roc`, preserves default VPCs unless `--include-default-vpcs` is passed, and requires `--confirm-delete` before making changes.
 - `aws-scripts/rollback-aws-lab-resources.sh` recreates EC2/VPC lab infrastructure from a rollback manifest written by `aws-scripts/nuke-aws-lab-resources.sh`.
 
 ## Usage
