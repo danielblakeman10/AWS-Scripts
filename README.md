@@ -83,6 +83,18 @@ Delete only lab roles matching a name pattern without rollback:
 ./aws-scripts/delete-iam-roles-no-rollback.sh --name-pattern '^my-lab-' --confirm-delete
 ```
 
+Delete IAM roles older than one year:
+
+```bash
+./aws-scripts/delete-iam-roles.sh --older-than-one-year --confirm-delete
+```
+
+Delete IAM roles older than one year without rollback:
+
+```bash
+./aws-scripts/delete-iam-roles-no-rollback.sh --older-than-one-year --confirm-delete
+```
+
 Delete IAM roles while excluding protected naming patterns:
 
 ```bash

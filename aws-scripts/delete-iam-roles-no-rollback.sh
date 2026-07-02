@@ -7,6 +7,7 @@ CONFIRM=false
 INCLUDE_SERVICE_LINKED=false
 NAME_PATTERN=""
 EXCLUDE_NAME_PATTERN=""
+OLDER_THAN_DAYS=""
 
 usage() {
     cat <<EOF
@@ -23,6 +24,8 @@ Options:
   --name-pattern REGEX      Only delete role names matching this regex.
   --exclude-name-pattern REGEX
                             Skip role names matching this regex.
+  --older-than-days DAYS    Only delete roles created more than DAYS ago.
+  --older-than-one-year     Only delete roles older than 365 days.
   --include-service-linked  Also attempt service-linked role deletion.
   -h, --help                Show this help.
 
@@ -63,6 +66,7 @@ words() {
 should_delete_role() {
     local role_name=$1
     local role_path=$2
+    local create_date=$3
 
     if [ "$INCLUDE_SERVICE_LINKED" != true ] && [[ "$role_path" == /aws-service-role/* ]]; then
         warn "Skipping service-linked role: ${role_name}"
@@ -77,6 +81,25 @@ should_delete_role() {
     if [ -n "$EXCLUDE_NAME_PATTERN" ] && printf '%s\n' "$role_name" | grep -Eiq "$EXCLUDE_NAME_PATTERN"; then
         warn "Skipping role because it matches --exclude-name-pattern: ${role_name}"
         return 1
+    fi
+
+    if [ -n "$OLDER_THAN_DAYS" ]; then
+        if ! python3 - "$create_date" "$OLDER_THAN_DAYS" <<'PY'
+import sys
+from datetime import datetime, timezone, timedelta
+
+create_date = sys.argv[1].replace("Z", "+00:00")
+older_than_days = int(sys.argv[2])
+created = datetime.fromisoformat(create_date)
+if created.tzinfo is None:
+    created = created.replace(tzinfo=timezone.utc)
+cutoff = datetime.now(timezone.utc) - timedelta(days=older_than_days)
+sys.exit(0 if created < cutoff else 1)
+PY
+        then
+            log "Skipping role because it is not older than ${OLDER_THAN_DAYS} days: ${role_name}"
+            return 1
+        fi
     fi
 
     return 0
@@ -155,6 +178,14 @@ while [ $# -gt 0 ]; do
             EXCLUDE_NAME_PATTERN=${2:?Missing exclude name pattern}
             shift 2
             ;;
+        --older-than-days)
+            OLDER_THAN_DAYS=${2:?Missing day count}
+            shift 2
+            ;;
+        --older-than-one-year)
+            OLDER_THAN_DAYS=365
+            shift
+            ;;
         --include-service-linked)
             INCLUDE_SERVICE_LINKED=true
             shift
@@ -191,7 +222,7 @@ if [ "$CONFIRM" != true ]; then
 fi
 
 roles_json=$(aws iam list-roles \
-    --query 'Roles[].{RoleName:RoleName,Path:Path}' \
+    --query 'Roles[].{RoleName:RoleName,Path:Path,CreateDate:CreateDate}' \
     --output json)
 
 role_lines=$(python3 - "$roles_json" <<'PY'
@@ -200,7 +231,7 @@ import sys
 
 roles = json.loads(sys.argv[1])
 for role in roles:
-    print(f"{role['RoleName']}\t{role['Path']}")
+    print(f"{role['RoleName']}\t{role['Path']}\t{role['CreateDate']}")
 PY
 )
 
@@ -209,9 +240,9 @@ if [ -z "$role_lines" ]; then
     exit 0
 fi
 
-while IFS=$'\t' read -r role_name role_path; do
+while IFS=$'\t' read -r role_name role_path create_date; do
     [ -z "$role_name" ] && continue
-    if should_delete_role "$role_name" "$role_path"; then
+    if should_delete_role "$role_name" "$role_path" "$create_date"; then
         delete_role "$role_name" "$role_path"
     fi
 done <<< "$role_lines"

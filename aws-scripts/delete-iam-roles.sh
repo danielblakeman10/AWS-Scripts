@@ -8,6 +8,7 @@ INCLUDE_SERVICE_LINKED=false
 NAME_PATTERN=""
 EXCLUDE_NAME_PATTERN=""
 MANIFEST_DIR="./rollback-manifests"
+OLDER_THAN_DAYS=""
 
 usage() {
     cat <<EOF
@@ -23,6 +24,8 @@ Options:
   --name-pattern REGEX      Only delete role names matching this regex.
   --exclude-name-pattern REGEX
                             Skip role names matching this regex.
+  --older-than-days DAYS    Only delete roles created more than DAYS ago.
+  --older-than-one-year     Only delete roles older than 365 days.
   --include-service-linked  Also attempt service-linked role deletion.
   --manifest-dir DIR        Write rollback manifests to this directory. Default: ${MANIFEST_DIR}
   -h, --help                Show this help.
@@ -64,6 +67,7 @@ words() {
 should_delete_role() {
     local role_name=$1
     local role_path=$2
+    local create_date=$3
 
     if [ "$INCLUDE_SERVICE_LINKED" != true ] && [[ "$role_path" == /aws-service-role/* ]]; then
         warn "Skipping service-linked role: ${role_name}"
@@ -80,6 +84,25 @@ should_delete_role() {
         return 1
     fi
 
+    if [ -n "$OLDER_THAN_DAYS" ]; then
+        if ! python3 - "$create_date" "$OLDER_THAN_DAYS" <<'PY'
+import sys
+from datetime import datetime, timezone, timedelta
+
+create_date = sys.argv[1].replace("Z", "+00:00")
+older_than_days = int(sys.argv[2])
+created = datetime.fromisoformat(create_date)
+if created.tzinfo is None:
+    created = created.replace(tzinfo=timezone.utc)
+cutoff = datetime.now(timezone.utc) - timedelta(days=older_than_days)
+sys.exit(0 if created < cutoff else 1)
+PY
+        then
+            log "Skipping role because it is not older than ${OLDER_THAN_DAYS} days: ${role_name}"
+            return 1
+        fi
+    fi
+
     return 0
 }
 
@@ -92,17 +115,18 @@ write_rollback_manifest() {
     manifest_path="${MANIFEST_DIR}/iam-role-cleanup-inventory-${timestamp}.json"
 
     log "Writing IAM rollback inventory manifest: ${manifest_path}"
-    python3 - "$manifest_path" "$INCLUDE_SERVICE_LINKED" "$NAME_PATTERN" "$EXCLUDE_NAME_PATTERN" <<'PY'
+    python3 - "$manifest_path" "$INCLUDE_SERVICE_LINKED" "$NAME_PATTERN" "$EXCLUDE_NAME_PATTERN" "$OLDER_THAN_DAYS" <<'PY'
 import json
 import re
 import subprocess
 import sys
-from datetime import datetime, timezone
+from datetime import datetime, timezone, timedelta
 
 manifest_path = sys.argv[1]
 include_service_linked = sys.argv[2].lower() == "true"
 name_pattern = sys.argv[3]
 exclude_name_pattern = sys.argv[4]
+older_than_days = int(sys.argv[5]) if sys.argv[5] else None
 
 def aws_json(args):
     proc = subprocess.run(["aws", *args, "--output", "json"], text=True, capture_output=True)
@@ -120,6 +144,18 @@ def matches(role):
         return False
     if exclude_name_pattern and re.search(exclude_name_pattern, name, re.IGNORECASE):
         return False
+    if older_than_days is not None:
+        created = role.get("CreateDate")
+        if not created:
+            return False
+        if not isinstance(created, str):
+            created = created.isoformat()
+        created = created.replace("Z", "+00:00")
+        created_dt = datetime.fromisoformat(created)
+        if created_dt.tzinfo is None:
+            created_dt = created_dt.replace(tzinfo=timezone.utc)
+        if created_dt >= datetime.now(timezone.utc) - timedelta(days=older_than_days):
+            return False
     return True
 
 roles = aws_json(["iam", "list-roles"]) or {"Roles": []}
@@ -167,6 +203,7 @@ manifest = {
     "includeServiceLinked": include_service_linked,
     "namePattern": name_pattern,
     "excludeNamePattern": exclude_name_pattern,
+    "olderThanDays": older_than_days,
     "roles": selected
 }
 
@@ -249,6 +286,14 @@ while [ $# -gt 0 ]; do
             EXCLUDE_NAME_PATTERN=${2:?Missing exclude name pattern}
             shift 2
             ;;
+        --older-than-days)
+            OLDER_THAN_DAYS=${2:?Missing day count}
+            shift 2
+            ;;
+        --older-than-one-year)
+            OLDER_THAN_DAYS=365
+            shift
+            ;;
         --include-service-linked)
             INCLUDE_SERVICE_LINKED=true
             shift
@@ -286,7 +331,7 @@ else
 fi
 
 roles_json=$(aws iam list-roles \
-    --query 'Roles[].{RoleName:RoleName,Path:Path}' \
+    --query 'Roles[].{RoleName:RoleName,Path:Path,CreateDate:CreateDate}' \
     --output json)
 
 role_lines=$(python3 - "$roles_json" <<'PY'
@@ -295,7 +340,7 @@ import sys
 
 roles = json.loads(sys.argv[1])
 for role in roles:
-    print(f"{role['RoleName']}\t{role['Path']}")
+    print(f"{role['RoleName']}\t{role['Path']}\t{role['CreateDate']}")
 PY
 )
 
@@ -304,9 +349,9 @@ if [ -z "$role_lines" ]; then
     exit 0
 fi
 
-while IFS=$'\t' read -r role_name role_path; do
+while IFS=$'\t' read -r role_name role_path create_date; do
     [ -z "$role_name" ] && continue
-    if should_delete_role "$role_name" "$role_path"; then
+    if should_delete_role "$role_name" "$role_path" "$create_date"; then
         delete_role "$role_name" "$role_path"
     fi
 done <<< "$role_lines"
