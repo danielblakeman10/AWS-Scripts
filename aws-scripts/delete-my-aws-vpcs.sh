@@ -12,7 +12,8 @@ usage() {
     cat <<EOF
 Usage: ./delete-my-aws-vpcs.sh [options]
 
-Deletes VPCs tagged Name=${VPC_NAME} and their common dependencies.
+Deletes VPCs tagged Name=${VPC_NAME} and their common dependencies, including
+eligible EC2 network interfaces.
 
 Options:
   --region REGION     AWS region to clean. Default: ${REGION}
@@ -131,6 +132,50 @@ delete_vpc_dependencies() {
         run aws ec2 delete-route-table --region "$region" --route-table-id "$route_table_id" >/dev/null || true
     done
 
+    local network_interface_ids
+    network_interface_ids=$(aws ec2 describe-network-interfaces \
+        --region "$region" \
+        --filters "Name=vpc-id,Values=${vpc_id}" \
+        --query 'NetworkInterfaces[].NetworkInterfaceId' \
+        --output text | read_words)
+
+    for network_interface_id in $network_interface_ids; do
+        requester_managed=$(aws ec2 describe-network-interfaces \
+            --region "$region" \
+            --network-interface-ids "$network_interface_id" \
+            --query 'NetworkInterfaces[0].RequesterManaged' \
+            --output text 2>/dev/null || true)
+        if [ "$requester_managed" = "True" ]; then
+            warn "Skipping requester-managed network interface: ${network_interface_id}"
+            continue
+        fi
+
+        attachment_id=$(aws ec2 describe-network-interfaces \
+            --region "$region" \
+            --network-interface-ids "$network_interface_id" \
+            --query 'NetworkInterfaces[0].Attachment.AttachmentId' \
+            --output text 2>/dev/null || true)
+
+        if [ -n "$attachment_id" ] && [ "$attachment_id" != "None" ]; then
+            log "Detaching network interface: ${network_interface_id}"
+            run aws ec2 detach-network-interface --region "$region" --attachment-id "$attachment_id" --force >/dev/null || true
+            if [ "$DRY_RUN" = false ]; then
+                for _ in 1 2 3 4 5 6 7 8 9 10 11 12; do
+                    status=$(aws ec2 describe-network-interfaces \
+                        --region "$region" \
+                        --network-interface-ids "$network_interface_id" \
+                        --query 'NetworkInterfaces[0].Status' \
+                        --output text 2>/dev/null || true)
+                    [ "$status" = "available" ] && break
+                    sleep 5
+                done
+            fi
+        fi
+
+        log "Deleting network interface: ${network_interface_id}"
+        run aws ec2 delete-network-interface --region "$region" --network-interface-id "$network_interface_id" >/dev/null || true
+    done
+
     local subnet_ids
     subnet_ids=$(aws ec2 describe-subnets \
         --region "$region" \
@@ -176,8 +221,11 @@ delete_matching_vpcs_in_region() {
         log "Preparing to delete VPC: ${vpc_id}"
         delete_vpc_dependencies "$region" "$vpc_id"
         log "Deleting VPC: ${vpc_id}"
-        run aws ec2 delete-vpc --region "$region" --vpc-id "$vpc_id" >/dev/null
-        log "Deleted VPC: ${vpc_id}"
+        if run aws ec2 delete-vpc --region "$region" --vpc-id "$vpc_id" >/dev/null; then
+            log "Deleted VPC: ${vpc_id}"
+        else
+            err "Failed to delete VPC: ${vpc_id}"
+        fi
     done
 }
 
