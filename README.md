@@ -6,7 +6,7 @@ Small Bash utilities for AWS CLI learning labs.
 
 - `aws-scripts/aws-auto-deploy.sh` creates a basic EC2 lab stack in `us-east-1`: VPC, public subnet, route table, internet gateway, security group, key pair, and EC2 instance.
 - `aws-scripts/delete-my-aws-vpcs.sh` deletes VPCs tagged `Name=my-aws-vpc` and common dependencies such as EC2 instances, NAT gateways, internet gateways, subnets, route tables, and non-default security groups.
-- `aws-scripts/nuke-aws-lab-resources.sh` scans enabled regions and deletes EC2 instances, EC2 key pairs, VPC dependencies, and VPCs. It defaults to dry-run, skips any resource with a tag key or value containing `roc`, preserves default VPCs unless `--include-default-vpcs` is passed, and requires `--confirm-delete` before making changes.
+- `aws-scripts/nuke-aws-lab-resources.sh` scans enabled regions and deletes EC2 instances, EC2 key pairs, network interfaces, VPC dependencies, and VPCs. It defaults to dry-run, skips any resource with a tag key or value containing `roc`, preserves default VPCs unless `--include-default-vpcs` is passed, and requires `--confirm-delete` before making changes.
 - `aws-scripts/rollback-aws-lab-resources.sh` recreates EC2/VPC lab infrastructure from a rollback manifest written by `aws-scripts/nuke-aws-lab-resources.sh`.
 
 ## Usage
@@ -96,4 +96,4 @@ Actually run rollback:
 
 These scripts are for lab environments. Review security group rules and deletion behavior before using them in any shared or production AWS account.
 
-Rollback has limits: original AWS resource IDs cannot be restored, terminated EC2 disks/data cannot be restored unless separately backed up, EC2 instances are relaunched from captured configuration when possible, and key pairs are restored only when public key material is available in the manifest.
+Rollback has limits: original AWS resource IDs cannot be restored, terminated EC2 disks/data cannot be restored unless separately backed up, EC2 instances are relaunched from captured configuration when possible, attached/requester-managed network interfaces are not directly recreated, and key pairs are restored only when public key material is available in the manifest.

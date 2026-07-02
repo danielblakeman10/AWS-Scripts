@@ -25,6 +25,7 @@ Limitations:
   - Terminated EC2 instance disks/data cannot be restored unless separately backed up.
   - EC2 instances are relaunched from their original AMI, instance type, subnet, key name,
     security groups, and tags when possible.
+  - Standalone available network interfaces are recreated when possible.
   - Key pairs are restored only when the manifest contains public key material.
 EOF
 }
@@ -185,6 +186,7 @@ for region_data in manifest.get("regions", []):
     igw_map = {}
     route_table_map = {}
     sg_map = {}
+    network_interface_map = {}
 
     for vpc in region_data.get("vpcs", []):
         cidr = vpc.get("CidrBlock")
@@ -320,6 +322,41 @@ for region_data in manifest.get("regions", []):
                 *target_args,
                 "--output", "json"
             ], allow_fail=True)
+
+    for eni in region_data.get("networkInterfaces", []):
+        if eni.get("RequesterManaged"):
+            warn(f"Skipping requester-managed network interface: {eni.get('NetworkInterfaceId')}")
+            continue
+        if eni.get("Attachment"):
+            warn(f"Skipping attached network interface; EC2 restore recreates primary ENIs: {eni.get('NetworkInterfaceId')}")
+            continue
+        new_subnet_id = subnet_map.get(eni.get("SubnetId"))
+        if not new_subnet_id:
+            warn(f"Skipping network interface because subnet was not restored: {eni.get('NetworkInterfaceId')}")
+            continue
+        groups = [
+            sg_map.get(group.get("GroupId"))
+            for group in eni.get("Groups", [])
+            if sg_map.get(group.get("GroupId"))
+        ]
+        if not groups:
+            warn(f"Skipping network interface because security groups were not restored: {eni.get('NetworkInterfaceId')}")
+            continue
+        args = [
+            "ec2", "create-network-interface",
+            "--region", region,
+            "--subnet-id", new_subnet_id,
+            "--groups", *groups,
+            "--output", "json",
+        ]
+        if eni.get("Description"):
+            args.extend(["--description", eni["Description"]])
+        if eni.get("PrivateIpAddress"):
+            args.extend(["--private-ip-address", eni["PrivateIpAddress"]])
+        args.extend(tag_specs("network-interface", eni.get("TagSet", [])))
+        result = aws(args, allow_fail=True)
+        if result:
+            network_interface_map[eni["NetworkInterfaceId"]] = result["NetworkInterface"]["NetworkInterfaceId"]
 
     for key_pair in region_data.get("keyPairs", []):
         public_key = key_pair.get("PublicKey")
