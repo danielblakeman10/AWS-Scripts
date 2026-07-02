@@ -7,6 +7,7 @@ Small Bash utilities for AWS CLI learning labs.
 - `aws-scripts/aws-auto-deploy.sh` creates a basic EC2 lab stack in `us-east-1`: VPC, public subnet, route table, internet gateway, security group, key pair, and EC2 instance.
 - `aws-scripts/delete-my-aws-vpcs.sh` deletes VPCs tagged `Name=my-aws-vpc` and common dependencies such as EC2 instances, EC2 Instance Connect Endpoints, NAT gateways, internet gateways, network interfaces, subnets, route tables, and non-default security groups.
 - `aws-scripts/delete-iam-identity-providers.sh` deletes IAM SAML and OpenID Connect identity providers. It defaults to dry-run and supports ARN include/exclude filters.
+- `aws-scripts/delete-inactive-or-old-iam-roles.sh` deletes IAM roles with no recorded role activity or roles created more than 30 days ago. It defaults to dry-run and skips service-linked roles unless explicitly included.
 - `aws-scripts/delete-iam-roles.sh` deletes IAM roles after removing managed policy attachments, inline policies, and instance profile associations. It writes an IAM rollback manifest before confirmed deletion, defaults to dry-run, and skips service-linked roles unless explicitly included.
 - `aws-scripts/delete-iam-roles-no-rollback.sh` deletes IAM roles with the same cleanup behavior but does not create a rollback manifest.
 - `aws-scripts/nuke-aws-lab-resources.sh` scans enabled regions and deletes EC2 instances, EC2 key pairs, EC2 Instance Connect Endpoints, network interfaces, VPC dependencies, and VPCs. It defaults to dry-run, skips any resource with a tag key or value containing `roc`, preserves default VPCs unless `--include-default-vpcs` is passed, and requires `--confirm-delete` before making changes.
@@ -54,6 +55,27 @@ Delete only GitHub Actions OIDC providers:
 ```bash
 ./aws-scripts/delete-iam-identity-providers.sh \
   --arn-pattern 'token.actions.githubusercontent.com' \
+  --confirm-delete
+```
+
+Preview IAM roles with no activity or older than 30 days:
+
+```bash
+chmod +x aws-scripts/delete-inactive-or-old-iam-roles.sh
+./aws-scripts/delete-inactive-or-old-iam-roles.sh
+```
+
+Delete IAM roles with no activity or older than 30 days:
+
+```bash
+./aws-scripts/delete-inactive-or-old-iam-roles.sh --confirm-delete
+```
+
+Delete matching roles while excluding protected naming patterns:
+
+```bash
+./aws-scripts/delete-inactive-or-old-iam-roles.sh \
+  --exclude-name-pattern 'roc|AWSReservedSSO' \
   --confirm-delete
 ```
 
