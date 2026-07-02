@@ -4,51 +4,51 @@ Small Bash utilities for AWS CLI learning labs.
 
 ## Scripts
 
-- `aws-auto-deploy.sh` creates a basic EC2 lab stack in `us-east-1`: VPC, public subnet, route table, internet gateway, security group, key pair, and EC2 instance.
-- `delete-my-aws-vpcs.sh` deletes VPCs tagged `Name=my-aws-vpc` and common dependencies such as EC2 instances, NAT gateways, internet gateways, subnets, route tables, and non-default security groups.
-- `nuke-aws-lab-resources.sh` scans enabled regions and deletes EC2 instances, EC2 key pairs, VPC dependencies, and VPCs. It defaults to dry-run, skips any resource with a tag key or value containing `roc`, preserves default VPCs unless `--include-default-vpcs` is passed, and requires `--confirm-delete` before making changes.
-- `rollback-aws-lab-resources.sh` recreates EC2/VPC lab infrastructure from a rollback manifest written by `nuke-aws-lab-resources.sh`.
+- `aws-scripts/aws-auto-deploy.sh` creates a basic EC2 lab stack in `us-east-1`: VPC, public subnet, route table, internet gateway, security group, key pair, and EC2 instance.
+- `aws-scripts/delete-my-aws-vpcs.sh` deletes VPCs tagged `Name=my-aws-vpc` and common dependencies such as EC2 instances, NAT gateways, internet gateways, subnets, route tables, and non-default security groups.
+- `aws-scripts/nuke-aws-lab-resources.sh` scans enabled regions and deletes EC2 instances, EC2 key pairs, VPC dependencies, and VPCs. It defaults to dry-run, skips any resource with a tag key or value containing `roc`, preserves default VPCs unless `--include-default-vpcs` is passed, and requires `--confirm-delete` before making changes.
+- `aws-scripts/rollback-aws-lab-resources.sh` recreates EC2/VPC lab infrastructure from a rollback manifest written by `aws-scripts/nuke-aws-lab-resources.sh`.
 
 ## Usage
 
 Validate syntax without running commands:
 
 ```bash
-bash -n aws-auto-deploy.sh
-bash -n delete-my-aws-vpcs.sh
+bash -n aws-scripts/aws-auto-deploy.sh
+bash -n aws-scripts/delete-my-aws-vpcs.sh
 ```
 
 Run the deploy script:
 
 ```bash
-chmod +x aws-auto-deploy.sh
-./aws-auto-deploy.sh
+chmod +x aws-scripts/aws-auto-deploy.sh
+./aws-scripts/aws-auto-deploy.sh
 ```
 
 Dry-run the cleanup script first:
 
 ```bash
-chmod +x delete-my-aws-vpcs.sh
-./delete-my-aws-vpcs.sh --dry-run
+chmod +x aws-scripts/delete-my-aws-vpcs.sh
+./aws-scripts/delete-my-aws-vpcs.sh --dry-run
 ```
 
 Delete matching VPCs in the default region:
 
 ```bash
-./delete-my-aws-vpcs.sh
+./aws-scripts/delete-my-aws-vpcs.sh
 ```
 
 Preview broad EC2/VPC cleanup across all enabled regions:
 
 ```bash
-chmod +x nuke-aws-lab-resources.sh
-./nuke-aws-lab-resources.sh
+chmod +x aws-scripts/nuke-aws-lab-resources.sh
+./aws-scripts/nuke-aws-lab-resources.sh
 ```
 
 Actually delete broad EC2/VPC lab resources:
 
 ```bash
-./nuke-aws-lab-resources.sh --confirm-delete
+./aws-scripts/nuke-aws-lab-resources.sh --confirm-delete
 ```
 
 When confirmed deletion runs, the script writes a rollback manifest under:
@@ -62,26 +62,26 @@ The broad cleanup script always skips resources with tag keys or values containi
 Actually delete all matching EC2/VPC resources, including default VPCs:
 
 ```bash
-./nuke-aws-lab-resources.sh --include-default-vpcs --confirm-delete
+./aws-scripts/nuke-aws-lab-resources.sh --include-default-vpcs --confirm-delete
 ```
 
 Limit broad cleanup to one region:
 
 ```bash
-./nuke-aws-lab-resources.sh --region us-east-1 --confirm-delete
+./aws-scripts/nuke-aws-lab-resources.sh --region us-east-1 --confirm-delete
 ```
 
 Preview rollback from a manifest:
 
 ```bash
-chmod +x rollback-aws-lab-resources.sh
-./rollback-aws-lab-resources.sh --manifest ./rollback-manifests/aws-cleanup-inventory-YYYYMMDDTHHMMSSZ.json
+chmod +x aws-scripts/rollback-aws-lab-resources.sh
+./aws-scripts/rollback-aws-lab-resources.sh --manifest ./rollback-manifests/aws-cleanup-inventory-YYYYMMDDTHHMMSSZ.json
 ```
 
 Actually run rollback:
 
 ```bash
-./rollback-aws-lab-resources.sh \
+./aws-scripts/rollback-aws-lab-resources.sh \
   --manifest ./rollback-manifests/aws-cleanup-inventory-YYYYMMDDTHHMMSSZ.json \
   --confirm-restore
 ```
