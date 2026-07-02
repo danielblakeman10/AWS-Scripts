@@ -169,14 +169,18 @@ if [ "$CONFIRM" != true ]; then
 fi
 
 roles_json=$(aws iam list-roles --output json)
+roles_json_file=$(mktemp)
+trap 'rm -f "$roles_json_file"' EXIT
+printf '%s' "$roles_json" > "$roles_json_file"
 
-role_lines=$(python3 - "$roles_json" "$OLDER_THAN_DAYS" "$INCLUDE_SERVICE_LINKED" "$EXCLUDE_NAME_PATTERN" <<'PY'
+role_lines=$(python3 - "$roles_json_file" "$OLDER_THAN_DAYS" "$INCLUDE_SERVICE_LINKED" "$EXCLUDE_NAME_PATTERN" <<'PY'
 import json
 import re
 import sys
 from datetime import datetime, timezone, timedelta
 
-roles = json.loads(sys.argv[1]).get("Roles", [])
+with open(sys.argv[1], "r", encoding="utf-8") as handle:
+    roles = json.load(handle).get("Roles", [])
 older_than_days = int(sys.argv[2])
 include_service_linked = sys.argv[3].lower() == "true"
 exclude_pattern = sys.argv[4]
