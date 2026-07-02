@@ -6,6 +6,7 @@ Small Bash utilities for AWS CLI learning labs.
 
 - `aws-scripts/aws-auto-deploy.sh` creates a basic EC2 lab stack in `us-east-1`: VPC, public subnet, route table, internet gateway, security group, key pair, and EC2 instance.
 - `aws-scripts/delete-my-aws-vpcs.sh` deletes VPCs tagged `Name=my-aws-vpc` and common dependencies such as EC2 instances, EC2 Instance Connect Endpoints, NAT gateways, internet gateways, network interfaces, subnets, route tables, and non-default security groups.
+- `aws-scripts/delete-iam-roles.sh` deletes IAM roles after removing managed policy attachments, inline policies, and instance profile associations. It defaults to dry-run and skips service-linked roles unless explicitly included.
 - `aws-scripts/nuke-aws-lab-resources.sh` scans enabled regions and deletes EC2 instances, EC2 key pairs, EC2 Instance Connect Endpoints, network interfaces, VPC dependencies, and VPCs. It defaults to dry-run, skips any resource with a tag key or value containing `roc`, preserves default VPCs unless `--include-default-vpcs` is passed, and requires `--confirm-delete` before making changes.
 - `aws-scripts/rollback-aws-lab-resources.sh` recreates EC2/VPC lab infrastructure from a rollback manifest written by `aws-scripts/nuke-aws-lab-resources.sh`.
 
@@ -36,6 +37,25 @@ Delete matching VPCs in the default region:
 
 ```bash
 ./aws-scripts/delete-my-aws-vpcs.sh
+```
+
+Preview IAM role cleanup:
+
+```bash
+chmod +x aws-scripts/delete-iam-roles.sh
+./aws-scripts/delete-iam-roles.sh
+```
+
+Delete only lab roles matching a name pattern:
+
+```bash
+./aws-scripts/delete-iam-roles.sh --name-pattern '^my-lab-' --confirm-delete
+```
+
+Delete IAM roles while excluding protected naming patterns:
+
+```bash
+./aws-scripts/delete-iam-roles.sh --exclude-name-pattern 'roc|AWSReservedSSO' --confirm-delete
 ```
 
 Preview broad EC2/VPC cleanup across all enabled regions:
