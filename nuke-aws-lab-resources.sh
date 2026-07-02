@@ -6,6 +6,7 @@ set -o pipefail
 CONFIRM=false
 REGION=""
 ALL_REGIONS=true
+INCLUDE_DEFAULT_VPCS=false
 
 usage() {
     cat <<EOF
@@ -20,6 +21,8 @@ Options:
   --confirm-delete   Actually delete resources.
   --region REGION    Limit deletion to one AWS region.
   --all-regions      Scan all enabled regions. Default behavior.
+  --include-default-vpcs
+                     Also delete default VPCs. Default behavior preserves them.
   -h, --help         Show this help.
 EOF
 }
@@ -209,19 +212,26 @@ delete_security_groups() {
 delete_vpcs() {
     local region=$1
     local vpc_ids
+    local query
+
+    if [ "$INCLUDE_DEFAULT_VPCS" = true ]; then
+        query='Vpcs[].VpcId'
+    else
+        query='Vpcs[?IsDefault==`false`].VpcId'
+    fi
 
     vpc_ids=$(aws ec2 describe-vpcs \
         --region "$region" \
-        --query 'Vpcs[?IsDefault==`false`].VpcId' \
+        --query "$query" \
         --output text 2>/dev/null | words)
 
     if [ -z "$vpc_ids" ]; then
-        log "No non-default VPCs found in ${region}"
+        log "No matching VPCs found in ${region}"
         return 0
     fi
 
     for vpc_id in $vpc_ids; do
-        log "Cleaning non-default VPC in ${region}: ${vpc_id}"
+        log "Cleaning VPC in ${region}: ${vpc_id}"
         delete_nat_gateways "$region" "$vpc_id"
         delete_internet_gateways "$region" "$vpc_id"
         delete_route_tables "$region" "$vpc_id"
@@ -246,6 +256,10 @@ while [ $# -gt 0 ]; do
             ;;
         --all-regions)
             ALL_REGIONS=true
+            shift
+            ;;
+        --include-default-vpcs)
+            INCLUDE_DEFAULT_VPCS=true
             shift
             ;;
         -h|--help)
