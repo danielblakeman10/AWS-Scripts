@@ -10,6 +10,7 @@ Small Bash utilities for AWS CLI learning labs.
 - `aws-scripts/delete-inactive-or-old-iam-roles.sh` deletes IAM roles with no recorded role activity or roles created more than 30 days ago. It defaults to dry-run and skips service-linked roles unless explicitly included.
 - `aws-scripts/delete-iam-roles.sh` deletes IAM roles after removing managed policy attachments, inline policies, and instance profile associations. It writes an IAM rollback manifest before confirmed deletion, defaults to dry-run, and skips service-linked roles unless explicitly included.
 - `aws-scripts/delete-iam-roles-no-rollback.sh` deletes IAM roles with the same cleanup behavior but does not create a rollback manifest.
+- `aws-scripts/delete-never-used-iam-roles.sh` deletes IAM roles with no recorded `RoleLastUsed.LastUsedDate` value. It defaults to dry-run and skips service-linked roles unless explicitly included.
 - `aws-scripts/nuke-aws-lab-resources.sh` scans enabled regions and deletes EC2 instances, EC2 key pairs, EC2 Instance Connect Endpoints, network interfaces, VPC dependencies, and VPCs. It defaults to dry-run, skips any resource with a tag key or value containing `roc`, preserves default VPCs unless `--include-default-vpcs` is passed, and requires `--confirm-delete` before making changes.
 - `aws-scripts/rollback-iam-roles.sh` recreates IAM roles from a rollback manifest written by `aws-scripts/delete-iam-roles.sh`.
 - `aws-scripts/rollback-aws-lab-resources.sh` recreates EC2/VPC lab infrastructure from a rollback manifest written by `aws-scripts/nuke-aws-lab-resources.sh`.
@@ -69,6 +70,19 @@ Delete IAM roles with no activity or older than 30 days:
 
 ```bash
 ./aws-scripts/delete-inactive-or-old-iam-roles.sh --confirm-delete
+```
+
+Preview IAM roles that have never been used:
+
+```bash
+chmod +x aws-scripts/delete-never-used-iam-roles.sh
+./aws-scripts/delete-never-used-iam-roles.sh
+```
+
+Delete IAM roles that have never been used:
+
+```bash
+./aws-scripts/delete-never-used-iam-roles.sh --confirm-delete
 ```
 
 Delete matching roles while excluding protected naming patterns:
